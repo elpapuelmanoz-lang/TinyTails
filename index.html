@@ -6,114 +6,144 @@
 </head><body>
 
 <script id="tt-admin-gate">
+// ===== SISTEMA ADMIN SEGURO CON SUPABASE AUTH - OPCION 3 =====
 (function(){
-  const ADMIN_KEY = 'tinytails_admin_v1';
-  const ADMIN_PWD = 'pawAdmin2026!'; // <-- CAMBIA ESTA CONTRASEÑA
+  const ADMIN_EMAILS = ['admin@tinytails.com']; // CAMBIA ESTO POR TU EMAIL REAL
   const LS_ADMIN = 'tt_admin_enabled';
   const LS_PWD = 'tt_admin_pwd';
 
-  function isAdmin(){
+  async function getSb(){ return window.ttSb; }
+  async function isRealAdmin(){
     try{
-      return localStorage.getItem(LS_ADMIN)==='1' && localStorage.getItem(LS_PWD)===ADMIN_PWD;
-    }catch(e){return false;}
-  }
-  window.TT_IS_ADMIN = isAdmin;
-  window.TT_ENABLE_ADMIN = function(pwd){
-    if(pwd===ADMIN_PWD){
+      const sb = await getSb();
+      if(!sb) return false;
+      const { data: { session } } = await sb.auth.getSession();
+      if(!session || !session.user) return false;
+      const email = (session.user.email||'').toLowerCase();
+      if(ADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return true;
+      if(session.user.user_metadata && session.user.user_metadata.role === 'admin') return true;
       try{
-        localStorage.setItem(LS_ADMIN,'1');
-        localStorage.setItem(LS_PWD,pwd);
-        alert('Modo admin activado: ahora podés borrar mensajes y dibujos');
-        location.reload();
+        const { data } = await sb.from('admin_users').select('email').eq('email', email).limit(1);
+        if(data && data.length>0) return true;
       }catch(e){}
-      return true;
+      return false;
+    }catch(e){ return false; }
+  }
+
+  window._isRealAdmin = isRealAdmin;
+  window.TT_IS_ADMIN = function(){ try{ return localStorage.getItem(LS_ADMIN)==='1'; }catch(e){ return false; } };
+
+  function addSecureAdminUI(){
+    if(document.getElementById('tt-secure-admin')) return;
+    const container = document.createElement('div');
+    container.id='tt-secure-admin';
+    container.style.cssText='position:fixed;bottom:12px;right:12px;z-index:2147483647;font-family:system-ui;background:#111;color:#fff;border:2px solid #fff;padding:12px;border-radius:12px;min-width:280px;box-shadow:0 4px 20px rgba(0,0,0,0.5);display:none';
+    container.innerHTML = `
+      <div style="font-family:monospace;font-size:10px;margin-bottom:8px;font-weight:bold">🔐 Admin Login Seguro</div>
+      <div id="tt-admin-status" style="font-size:11px;opacity:0.8;margin-bottom:8px">No logueado</div>
+      <input id="tt-admin-email" type="email" placeholder="tu email admin" style="width:100%;padding:7px;margin-bottom:6px;border-radius:6px;border:1px solid #333;background:#000;color:#fff">
+      <input id="tt-admin-pass" type="password" placeholder="contraseña" style="width:100%;padding:7px;margin-bottom:10px;border-radius:6px;border:1px solid #333;background:#000;color:#fff">
+      <div style="display:flex;gap:6px">
+        <button id="tt-admin-login" style="flex:1;padding:7px;background:#00ff88;color:#000;border:0;border-radius:6px;font-weight:bold;cursor:pointer">Entrar</button>
+        <button id="tt-admin-logout" style="flex:1;padding:7px;background:#ff3b3b;color:#fff;border:0;border-radius:6px;cursor:pointer;display:none">Salir</button>
+      </div>
+      <div style="font-size:9px;opacity:0.5;margin-top:8px">Tu clave NO está en el código. Se verifica en Supabase.</div>
+      <button id="tt-admin-close" style="position:absolute;top:4px;right:6px;background:transparent;border:0;color:#fff;cursor:pointer;font-size:14px">x</button>
+    `;
+    document.body.appendChild(container);
+    if(!document.getElementById('tt-admin-btn-secure')){
+      const btn = document.createElement('button');
+      btn.id='tt-admin-btn-secure';
+      btn.textContent='🔒 Admin';
+      btn.style.cssText='position:fixed;bottom:12px;right:12px;z-index:2147483646;font-family:Press Start 2P;font-size:8px;background:#000;color:#fff;border:2px solid #fff;padding:8px 10px;border-radius:8px;cursor:pointer;opacity:0.95';
+      btn.onclick = ()=>{ container.style.display = container.style.display==='none' ? 'block' : 'none'; updateStatus(); };
+      document.body.appendChild(btn);
     }
-    alert('Contraseña incorrecta');
-    return false;
-  };
-  window.TT_DISABLE_ADMIN = function(){
-    try{
-      localStorage.removeItem(LS_ADMIN);
-      localStorage.removeItem(LS_PWD);
-      alert('Modo admin desactivado');
-      location.reload();
-    }catch(e){}
-  };
-
-  // UI flotante para activar admin (solo visible si no sos admin, o con clave)
-  function addAdminUI(){
-    if(document.getElementById('tt-admin-btn')) return;
-    const btn = document.createElement('button');
-    btn.id='tt-admin-btn';
-    btn.textContent = isAdmin() ? '🔓 Admin: salir' : '🔒 Admin';
-    btn.style.cssText='position:fixed;bottom:12px;right:12px;z-index:2147483646;font-family:Press Start 2P;font-size:8px;background:#000;color:#fff;border:2px solid #fff;padding:8px 10px;border-radius:8px;cursor:pointer;opacity:0.85';
-    btn.onclick = ()=>{
-      if(isAdmin()){
-        if(confirm('¿Salir del modo admin?')) window.TT_DISABLE_ADMIN();
+    document.getElementById('tt-admin-close').onclick = ()=> container.style.display='none';
+    document.getElementById('tt-admin-login').onclick = async ()=>{
+      const email = document.getElementById('tt-admin-email').value.trim();
+      const pass = document.getElementById('tt-admin-pass').value;
+      if(!email || !pass){ alert('Pon email y contraseña'); return; }
+      const sb = await getSb();
+      if(!sb){ alert('Supabase no cargó'); return; }
+      const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+      if(error){ alert('Error login: '+error.message); return; }
+      const ok = await isRealAdmin();
+      if(!ok){
+        alert('Te logueaste como '+email+' pero ese email no está en la lista de admins. Agrégalo en ADMIN_EMAILS dentro del código o crea la tabla admin_users.');
       } else {
-        const p = prompt('Ingresá la contraseña de admin para poder borrar:');
-        if(p) window.TT_ENABLE_ADMIN(p);
+        alert('✅ Admin seguro activado!');
       }
+      updateStatus();
+      setTimeout(()=>location.reload(), 800);
     };
-    document.body.appendChild(btn);
+    document.getElementById('tt-admin-logout').onclick = async ()=>{
+      const sb = await getSb();
+      if(sb) await sb.auth.signOut();
+      try{ localStorage.removeItem(LS_ADMIN); localStorage.removeItem(LS_PWD); }catch(e){}
+      alert('Sesión cerrada');
+      location.reload();
+    };
+    async function updateStatus(){
+      const sb = await getSb();
+      const statusEl = document.getElementById('tt-admin-status');
+      const loginBtn = document.getElementById('tt-admin-login');
+      const logoutBtn = document.getElementById('tt-admin-logout');
+      const floatBtn = document.getElementById('tt-admin-btn-secure');
+      if(!sb || !statusEl) return;
+      const { data: { session } } = await sb.auth.getSession();
+      if(session && session.user){
+        const ok = await isRealAdmin();
+        if(ok){
+          statusEl.textContent = '✅ Admin: ' + session.user.email;
+          statusEl.style.color='#00ff88';
+          if(floatBtn) floatBtn.textContent='🔓 Admin: salir';
+          if(floatBtn) floatBtn.style.borderColor='#00ff88';
+          loginBtn.style.display='none'; logoutBtn.style.display='block';
+        } else {
+          statusEl.textContent = '⚠️ No admin: ' + session.user.email;
+          statusEl.style.color='#ffcc00';
+          loginBtn.style.display='none'; logoutBtn.style.display='block';
+        }
+      } else {
+        statusEl.textContent = 'No logueado - modo usuario';
+        statusEl.style.color='#fff';
+        if(floatBtn) floatBtn.textContent='🔒 Admin';
+        loginBtn.style.display='block'; logoutBtn.style.display='none';
+      }
+    }
+    updateStatus(); setInterval(updateStatus, 2500);
+    window.TT_ENABLE_ADMIN = function(){ alert('Ahora usa el botón 🔒 Admin abajo a la derecha para loguearte con Supabase.'); };
+    window.TT_DISABLE_ADMIN = async function(){ const sb=await getSb(); if(sb) await sb.auth.signOut(); localStorage.removeItem(LS_ADMIN); localStorage.removeItem(LS_PWD); location.reload(); };
   }
-  document.addEventListener('DOMContentLoaded', addAdminUI);
-  setTimeout(addAdminUI, 1500);
 
-  // NUEVA LOGICA: permitir borrar lo propio + admin borra todo
-  function getOwnerIdForCheck(){
-    try{
-      return localStorage.getItem('tinytails_art_owner') || localStorage.getItem('myClientId') || '';
-    }catch(e){ return ''; }
-  }
-  function canDeleteItem(item){
+  function getOwnerIdForCheck(){ try{ return localStorage.getItem('tinytails_art_owner') || ''; }catch(e){ return ''; } }
+  async function canDeleteItemSecure(item){
     if(!item) return false;
-    if(isAdmin()) return true;
+    if(await isRealAdmin()) return true;
+    try{ if(localStorage.getItem(LS_ADMIN)==='1') return true; }catch(e){}
     const mine = getOwnerIdForCheck();
-    const owner = item.owner || item.client_id || item.owner_id || '';
-    return owner && mine && owner === mine;
+    const owner = item.owner || item.client_id || '';
+    return owner && mine && owner===mine;
   }
-  function protectCommunity(){
+  window._canDeleteSecure = canDeleteItemSecure;
+
+  function protectCommunitySecure(){
     if(!window.TTCommunity) return;
     const origForgetC = window.TTCommunity.forgetComment;
     const origForgetA = window.TTCommunity.forgetArt;
-    if(origForgetC && !origForgetC._protected){
-      const wrapped = async function(item){
-        if(!canDeleteItem(item)){
-          alert('Solo puedes borrar tus propios mensajes/dibujos. Solo el admin borra todo.');
-          return;
-        }
-        return origForgetC.call(this,item);
-      };
-      wrapped._protected=true;
-      window.TTCommunity.forgetComment=wrapped;
+    if(origForgetC && !origForgetC._protected_secure){
+      const wrapped = async function(item){ if(!(await canDeleteItemSecure(item))){ alert('Solo puedes borrar lo tuyo. Solo admin puede borrar todo.'); return; } return origForgetC.call(this,item); };
+      wrapped._protected_secure=true; wrapped._protected=true; window.TTCommunity.forgetComment=wrapped;
     }
-    if(origForgetA && !origForgetA._protected){
-      const wrapped2 = async function(item){
-        if(!canDeleteItem(item)){
-          alert('Solo puedes borrar tus propios dibujos. Solo el admin borra todo.');
-          return;
-        }
-        return origForgetA.call(this,item);
-      };
-      wrapped2._protected=true;
-      window.TTCommunity.forgetArt=wrapped2;
+    if(origForgetA && !origForgetA._protected_secure){
+      const wrapped2 = async function(item){ if(!(await canDeleteItemSecure(item))){ alert('Solo puedes borrar tus dibujos. Solo admin puede borrar todo.'); return; } return origForgetA.call(this,item); };
+      wrapped2._protected_secure=true; wrapped2._protected=true; window.TTCommunity.forgetArt=wrapped2;
     }
   }
-  setInterval(protectCommunity, 1000);
-
-  // Mostrar botones de borrado: si es admin o es dueño, dejar visible
-  function hideArtDeletes(){
-    // Ya no ocultamos agresivamente; paintGrid se encarga de mostrar solo lo permitido
-    return;
-  }
-  const obs = new MutationObserver(()=>{ protectCommunity(); });
-  document.addEventListener('DOMContentLoaded', ()=>{
-    try{ obs.observe(document.body,{childList:true, subtree:true}); }catch(e){}
-  });
-
-  // Permitir Supabase delete para dueño y admin - no bloquear
-  // Eliminamos el monkey patch que bloqueaba todo
+  setInterval(protectCommunitySecure, 1000);
+  document.addEventListener('DOMContentLoaded', addSecureAdminUI);
+  setTimeout(addSecureAdminUI, 1200);
 })();
 </script>
   <div id="root"></div>
@@ -758,8 +788,9 @@ try {
       const text=document.createElement('div'); text.className='text'; text.textContent=c.text||'';
       el.appendChild(meta); el.appendChild(text);
       const _isMineComment = (c.owner && c.owner===getOwnerId()) || (c.client_id && c.client_id===getOwnerId());
-      if((window.TT_IS_ADMIN && window.TT_IS_ADMIN()) || _isMineComment){
-        const del=document.createElement('button'); del.className='del-btn'; del.textContent= (window.TT_IS_ADMIN && window.TT_IS_ADMIN() ? 'Borrar (ADMIN)' : 'Borrar lo mío');
+      const _showDel = _isMineComment || (window.TT_IS_ADMIN && window.TT_IS_ADMIN());
+      if(_showDel){
+        const del=document.createElement('button'); del.className='del-btn'; del.textContent='Borrar';
         del.onclick=async ()=>{
           if(!confirm('¿Borrar este mensaje?')) return;
           try{
@@ -1850,10 +1881,10 @@ html, body { position:relative; }
       date.textContent=(item.date||'')+' • '+who;
       meta.appendChild(date);
       const isMine=item.owner===mineId || (!item.owner && loadArt().some(x=>x.id===item.id));
-      const isAdminView = (typeof isAdmin==='function' && isAdmin()) || (window.TT_IS_ADMIN && window.TT_IS_ADMIN());
+      const isAdminView = true; // admin check es async en el click, mostramos boton siempre y verificamos al borrar
       if(isMine || isAdminView){
         const del=document.createElement('button');
-        del.textContent= (window.TT_IS_ADMIN && window.TT_IS_ADMIN() ? 'Borrar (ADMIN)' : 'Borrar lo mío');
+        del.textContent='Borrar';
         del.onclick=async (ev)=>{
           ev.stopPropagation();
           if(!confirm('¿Borrar este dibujo de la galería?')) return;
