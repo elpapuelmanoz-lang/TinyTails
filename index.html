@@ -581,6 +581,18 @@ window.TT_STICKERS={
 })();
 </script>
 
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script id="tt-supabase-boot">
+window.TT_SUPABASE_URL = 'https://aciwvwyonqaazhqkckqf.supabase.co';
+window.TT_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjaXd2d3lvbnFhYXpocWtja3FmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNzg3MTMsImV4cCI6MjEwNzY1NDcxM30.vTDPP7KkK45gNOxEvGM6z44naBpl-4CM_cvqAbAfy2c';
+window.ttSb = null;
+try {
+  if (window.supabase && window.supabase.createClient) {
+    window.ttSb = window.supabase.createClient(window.TT_SUPABASE_URL, window.TT_SUPABASE_ANON);
+  }
+} catch (e) { console.warn('Supabase init', e); }
+</script>
 <script id="messages-custom-script">
 (function(){
   const LIST_KEY = 'tinytails_comments';
@@ -588,18 +600,7 @@ window.TT_STICKERS={
   const OWNER_KEY = 'tinytails_art_owner';
   const MAX_ITEMS = 80;
   const MAX_TEXT = 280;
-
-  const LIVE_TOPIC = 'tinytails_msgs_v5_live';
-  const LIVE_POST = 'https://ntfy.sh/' + LIVE_TOPIC;
-  const LIVE_POLL = 'https://ntfy.sh/' + LIVE_TOPIC + '/json?poll=1&since=30m';
-  const LIVE_SSE  = 'https://ntfy.sh/' + LIVE_TOPIC + '/sse';
-
-  const SNAP_HOSTS = [
-    { id:'ec1', url:'https://extendsclass.com/api/json-storage/bin/acfdecc', write:true, wrap:false },
-    { id:'ec2', url:'https://extendsclass.com/api/json-storage/bin/fdeadfa', write:true, wrap:false },
-    { id:'rs1', url:'https://api.restful-api.dev/objects/ff808181a09d98f701a0fc4a5138609b', write:true, wrap:true },
-    { id:'rs2', url:'https://api.restful-api.dev/objects/ff808181a09d98f701a0fc4a5290609c', write:true, wrap:true }
-  ];
+  const BLOCKED = /(porno|porn|xxx|sexo|sex[oa]|pene|vagina| tetas |culo|put[ao]s?|mierda|cagar|joder|carajo|bolud[oa]|estupido|estúpido|idiota|imbecil|imbécil|tonto de|kill yourself|suicid|nazi|hitler|drog[ao]|weed|cocaina|cocaína|marihuana|fuck|shit|bitch|asshole|dick|pussy|nigg|faggot|slut)/i;
 
   const input = document.getElementById('comment-input');
   const btn = document.getElementById('btn-publicar');
@@ -607,331 +608,138 @@ window.TT_STICKERS={
   const nameInput = document.getElementById('comment-name');
   const statusEl = document.getElementById('msg-status');
   const refreshBtn = document.getElementById('btn-refresh-msg');
-  const BLOCKED = /(porno|porn|xxx|sexo|sex[oa]|pene|vagina| tetas |culo|put[ao]s?|mierda|cagar|joder|carajo|bolud[oa]|estupido|estúpido|idiota|imbecil|imbécil|tonto de|kill yourself|suicid|nazi|hitler|drog[ao]|weed|cocaina|cocaína|marihuana|fuck|shit|bitch|asshole|dick|pussy|nigg|faggot|slut)/i;
 
-  let lastHash = '';
   let known = [];
   let deletedIds = {};
-  let liveOk = false, durableOk = false, sseRef = null, pushing = false, lastPullOkAt = 0;
-  let hasHydrated = false;
-  let bus = null; try{ bus = new BroadcastChannel('tinytails-comments-live'); }catch(e){}
-  let pendingOptimistic = new Set();
 
+  function sb(){ return window.ttSb; }
   function setStatus(msg,kind){ if(!statusEl) return; statusEl.textContent=msg||''; statusEl.className='msg-status'+(kind?' '+kind:''); }
   function getOwnerId(){ try{ let id=localStorage.getItem(OWNER_KEY); if(!id){ id='u_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem(OWNER_KEY,id);} return id;}catch(e){return 'u_temp';}}
   function getName(){ let n=(nameInput&&nameInput.value||'').trim(); if(!n){ try{n=(localStorage.getItem(NAME_KEY)||'').trim();}catch(e){}} if(!n) n='anon'; return n.slice(0,18); }
   function bindName(){ if(!nameInput||nameInput._bound) return; nameInput._bound=true; try{nameInput.value=localStorage.getItem(NAME_KEY)||'';}catch(e){} nameInput.addEventListener('change',()=>{ try{localStorage.setItem(NAME_KEY,nameInput.value.trim().slice(0,18));}catch(e){}}); }
-  function loadLocal(){ try{ const raw=localStorage.getItem(LIST_KEY); return raw?JSON.parse(raw):[];}catch(e){return [];}}
-  function saveLocal(arr){ try{ localStorage.setItem(LIST_KEY, JSON.stringify(arr.slice(-MAX_ITEMS))); }catch(e){}}
-  function keyOf(x){ return x?String(x.id||x._id||'') : ''; }
   function isClean(t){ if(!t) return false; if(BLOCKED.test(t)) return false; if(/(https?:\/\/|www\.)/i.test(t)) return false; return true; }
+  function keyOf(x){ return x?String(x.id||x._id||'') : ''; }
   function normalize(x){
     if(!x||typeof x!=='object') return null;
-    if(x.deleted){ const k=keyOf(x); if(k) deletedIds[k]=true; return null; }
     const text=String(x.text||'').trim(); if(!text||!isClean(text)) return null;
-    return { id:String(x.id||x._id||('m_'+Math.random().toString(36).slice(2))), date:String(x.date||''), ts:Number(x.ts)||Date.now(), name:String(x.name||'anon').slice(0,18), owner:String(x.owner||''), text:text.slice(0,MAX_TEXT) };
+    return { id:String(x.id||('m_'+Math.random().toString(36).slice(2))), date:String(x.date||''), ts:Number(x.ts)||Date.now(), name:String(x.name||'anon').slice(0,18), owner:String(x.owner||''), text:text.slice(0,MAX_TEXT) };
   }
-  function mergeComments(){
+  function sortComments(arr){ return (arr||[]).slice().sort((a,b)=>(Number(a.ts)||0)-(Number(b.ts)||0)); }
+  function saveLocal(arr){ try{ localStorage.setItem(LIST_KEY, JSON.stringify(arr.slice(-MAX_ITEMS))); }catch(e){} }
+  function loadLocal(){ try{ const raw=localStorage.getItem(LIST_KEY); return raw?JSON.parse(raw):[];}catch(e){return [];} }
+
+  function paint(highlightId){
+    if(!list) return;
+    const mine=getOwnerId();
+    const items=sortComments(known).slice(-MAX_ITEMS);
+    list.innerHTML='';
+    if(!items.length){
+      const empty=document.createElement('div'); empty.className='empty-msg'; empty.textContent='Todavía no hay mensajes. ¡Sé el primero!';
+      list.appendChild(empty); return;
+    }
+    items.slice().reverse().forEach(c=>{
+      const el=document.createElement('div'); el.className='comment-item';
+      if(highlightId && keyOf(c)===highlightId) el.style.outline='3px solid #ff2b7a';
+      const meta=document.createElement('div'); meta.className='meta';
+      meta.textContent=(c.date||'')+' • '+(c.name||'anon');
+      const text=document.createElement('div'); text.className='text'; text.textContent=c.text||'';
+      el.appendChild(meta); el.appendChild(text);
+      if(c.owner===mine){
+        const del=document.createElement('button'); del.className='del-btn'; del.textContent='Borrar';
+        del.onclick=async ()=>{
+          if(!confirm('¿Borrar este mensaje?')) return;
+          try{
+            const client=sb();
+            if(client) await client.from('comments').delete().eq('id', c.id);
+          }catch(e){}
+          known=known.filter(x=>keyOf(x)!==keyOf(c));
+          saveLocal(known); paint();
+        };
+        el.appendChild(del);
+      }
+      list.appendChild(el);
+    });
+  }
+
+  function mergeIn(rows){
     const map={};
-    const arrays=[].slice.call(arguments);
-    arrays.forEach(arr=>{
-      (arr||[]).forEach(raw=>{
-        const item=normalize(raw); if(!item) return;
-        const k=keyOf(item); if(!k||deletedIds[k]) return;
-        const prev=map[k];
-        if(!prev || (Number(item.ts)||0) >= (Number(prev.ts)||0)) map[k]=Object.assign({},prev||{},item);
-      });
+    known.forEach(x=>{ const k=keyOf(x); if(k) map[k]=x; });
+    (rows||[]).forEach(raw=>{
+      const item=normalize(raw); if(!item) return;
+      const k=keyOf(item); if(!k||deletedIds[k]) return;
+      map[k]=Object.assign({}, map[k]||{}, item);
     });
-    return Object.keys(map).map(k=>map[k]);
-  }
-  function absorb(){
-    const extra=(window.TTCommunity&&window.TTCommunity.readComments)?window.TTCommunity.readComments():[];
-    const allArgs = [known, loadLocal(), extra].concat([].slice.call(arguments));
-    known=mergeComments.apply(null, allArgs);
-    known=known.filter(c=>!deletedIds[keyOf(c)]);
+    known=Object.keys(map).map(k=>map[k]);
     saveLocal(known);
-    return known;
-  }
-  function sortComments(arr){ return arr.slice().sort((a,b)=>{ const ta=Number(a.ts)||0, tb=Number(b.ts)||0; if(ta!==tb) return ta-tb; return String(a.id||'').localeCompare(String(b.id||'')); }); }
-  function hashList(arr){ return sortComments(arr).map(c=>keyOf(c)).join('|'); }
-
-  function render(comments,mineId,opts){
-    opts=opts||{}; const list=document.getElementById('comments-list'); if(!list) return;
-    const visible=sortComments(comments).reverse().slice(0,MAX_ITEMS);
-    const h=hashList(visible)+(opts.pendingId||'');
-    if(h===lastHash && list.childNodes.length && !opts.force) return;
-    lastHash=h;
-    const frag=document.createDocumentFragment();
-    if(!visible.length){
-      const empty=document.createElement('div'); empty.className='empty-msg'; empty.textContent='Aún no se publicaron comentarios. ¡Escribí el primero!'; frag.appendChild(empty);
-    }else{
-      visible.forEach(c=>{
-        const div=document.createElement('div'); div.className='comment-item'; div.dataset.id=keyOf(c);
-        if(opts.pendingId && keyOf(c)===opts.pendingId){ div.style.outline='3px solid #ffcc00'; }
-        const meta=document.createElement('div'); meta.className='meta';
-        const who=(c.name||'anon').toString().slice(0,18);
-        meta.textContent=(c.date||'')+' • '+who+(opts.pendingId&&keyOf(c)===opts.pendingId?' • ¡ahora!':'');
-        const isMine=c.owner===mineId || (!c.owner && loadLocal().some(x=>keyOf(x)===keyOf(c)));
-        if(isMine && c.owner!=='u_sys'){
-          const del=document.createElement('button'); del.className='del-btn'; del.type='button'; del.textContent='Borrar';
-          del.onclick=()=>{
-            if(!confirm('¿Borrar este mensaje?')) return;
-            deletedIds[keyOf(c)]=true; known=known.filter(x=>keyOf(x)!==keyOf(c)); saveLocal(known); lastHash=''; render(known,mineId,{force:true});
-            if(window.TTCommunity) window.TTCommunity.forgetComment(c);
-            if(bus) try{bus.postMessage({type:'del',id:keyOf(c)});}catch(e){}
-            publishLive({id:keyOf(c),deleted:true,ts:Date.now(),text:'x',name:'x',owner:getOwnerId()}).catch(()=>{});
-            snapshotNow(true,false).catch(()=>{});
-          };
-          meta.appendChild(del);
-        }
-        const text=document.createElement('div'); text.className='text'; text.textContent=c.text;
-        div.appendChild(meta); div.appendChild(text); frag.appendChild(div);
-      });
-    }
-    list.innerHTML=''; list.appendChild(frag);
   }
 
-  function paint(pendingId,force){ bindName(); const merged=absorb(); render(merged,getOwnerId(),pendingId?{pendingId:pendingId,force:force}:{}); return merged; }
-
-  async function fetchWithTimeout(url,options,timeoutMs){
-    timeoutMs=timeoutMs||4000;
-    const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),timeoutMs);
-    try{ const res=await fetch(url,Object.assign({cache:'no-store'},options||{},{signal:ctrl.signal})); clearTimeout(t); if(!res.ok) throw new Error('HTTP '+res.status); const txt=await res.text(); if(!txt) return null; try{return JSON.parse(txt);}catch(e){return txt;} }catch(e){ clearTimeout(t); throw e; }
-  }
-  function parseLivePayload(raw){
-    if(!raw) return null; if(typeof raw==='object' && (raw.text||raw.deleted||raw.type==='snapshot')) return raw;
-    let s=typeof raw==='string'?raw:''; if(!s&&raw&&raw.message) s=String(raw.message); if(!s) return null; s=s.replace(/^TTJSON:/,'').replace(/^TTSNAP:/,''); try{return JSON.parse(s);}catch(e){return null;}
-  }
-  function ingestLiveEvents(payload){
-    const lines=[]; if(typeof payload==='string'){ payload.split('\n').forEach(line=>{ if(line.trim()) lines.push(line); }); }else if(payload&&payload.event){ lines.push(payload); }else if(Array.isArray(payload)){ payload.forEach(x=>lines.push(x)); }
-    const items=[], snaps=[]; lines.forEach(line=>{ let ev=line; if(typeof line==='string'){ try{ev=JSON.parse(line);}catch(e){ev=null;} } if(!ev||ev.event==='open'||ev.event==='keepalive') return; const item=parseLivePayload(ev); if(!item) return; if(item.type==='snapshot'&&Array.isArray(item.comments)){ snaps.push(item.comments); }else{ items.push(item); } });
-    if(items.length||snaps.length){ absorb.apply(null,snaps.concat([items])); liveOk=true; lastPullOkAt=Date.now(); hasHydrated=true; paint(null,true); }
-    return items.length+snaps.length;
-  }
-  async function pullLive(){
-    try{ const txt=await fetchWithTimeout(LIVE_POLL+'&t='+Date.now(),{headers:{'Accept':'application/json','Cache-Control':'no-cache'}},3500); ingestLiveEvents(txt); }catch(e){}
-  }
-  async function publishLive(item){
-    const body='TTJSON:'+JSON.stringify(item);
-    // keepalive para que no se cancele al cerrar pestaña
-    try{ fetch(LIVE_POST,{method:'POST',headers:{'Title':'TinyTails','Content-Type':'text/plain'},body:body,keepalive:true}); }catch(e){}
-    return true;
-  }
-  function extractList(data){
-    if(!data) return [];
-    if(Array.isArray(data)) return data.filter(x=>x&&(x.text||x.deleted));
-    if(Array.isArray(data.comments)) return data.comments;
-    if(data.data&&Array.isArray(data.data.comments)) return data.data.comments;
-    if(data.data&&data.data.data&&Array.isArray(data.data.data.comments)) return data.data.data.comments;
-    if(data.deleted && Array.isArray(data.deleted)){
-      data.deleted.forEach(function(id){ if(id) deletedIds[String(id)]=true; });
-    }
-    if(data.data && data.data.deleted && Array.isArray(data.data.deleted)){
-      data.data.deleted.forEach(function(id){ if(id) deletedIds[String(id)]=true; });
-    }
-    return [];
-  }
-
-  async function pullSnapshots(){
-    const jobs=SNAP_HOSTS.map(function(h){
-      const bust=h.url+(h.url.indexOf('?')>=0?'&':'?')+'t='+Date.now()+'&r='+Math.random().toString(36).slice(2,6);
-      return fetchWithTimeout(bust,{headers:{'Accept':'application/json','Cache-Control':'no-cache','Pragma':'no-cache'}},10000)
-        .then(function(data){ return extractList(data); })
-        .catch(function(){ return null; });
-    });
-    const lists=await Promise.all(jobs);
-    const okLists=lists.filter(function(x){ return Array.isArray(x); }); // include empty arrays so we know server responded
-    const withData=okLists.filter(function(x){ return x.length>0; });
-    if(okLists.length){
-      durableOk=true;
-      lastPullOkAt=Date.now();
-      hasHydrated=true;
-    }
-    if(withData.length){
-      absorb.apply(null, withData);
-      paint(null,true);
-    }
-    return withData.length;
-  }
-
-  // Escribe el merge completo a TODOS los servidores (nunca pisa con menos datos)
-  async function pushAllServers(comments){
-    const allMerged = sortComments(comments || absorb()).slice(-MAX_ITEMS);
-    if(!allMerged.length && !hasHydrated) return false;
-    const packed={
-      type:'tinytails-community',
-      updatedAt:Date.now(),
-      comments:allMerged,
-      deleted:Object.keys(deletedIds).slice(-200)
-    };
-    const writers=SNAP_HOSTS.filter(function(h){ return h.write; });
-    const results=await Promise.allSettled(writers.map(function(h){
-      const body=h.wrap ? {name:'tinytails-comments-v5', data:packed} : packed;
-      return fetch(h.url,{
-        method:'PUT',
-        headers:{'Content-Type':'application/json','Accept':'application/json'},
-        body:JSON.stringify(body),
-        keepalive:true,
-        cache:'no-store'
-      }).then(function(r){ return r.ok; }).catch(function(){ return false; });
-    }));
-    const ok=results.some(function(r){ return r.status==='fulfilled' && r.value; });
-    if(ok){ durableOk=true; lastPullOkAt=Date.now(); }
-    return ok;
-  }
-
-  async function snapshotNow(force, allowSkipPull){
-    if(pushing && !force) return false;
-    pushing=true;
-    try{
-      if(!allowSkipPull || !hasHydrated){
-        try{ await pullSnapshots(); }catch(e){}
-      }
-      const allMerged = sortComments(absorb()).slice(-MAX_ITEMS);
-      // Solo abortar si la nube ya tiene MUCHOS mas y nosotros casi nada (dispositivo nuevo vacio)
-      // Si nosotros tenemos mensajes, siempre subimos el merge (union)
-      const ok = await pushAllServers(allMerged);
-      return ok;
-    }finally{ pushing=false; }
-  }
-
-  function startSSE(){
-    if(sseRef) try{sseRef.close();}catch(e){}
-    try{
-      const es=new EventSource(LIVE_SSE); sseRef=es;
-      es.onmessage=ev=>{ try{ const data=JSON.parse(ev.data); ingestLiveEvents(data); setStatus('En vivo • '+absorb().length+' mensajes • instantáneo','ok'); }catch(e){} };
-      es.onerror=()=>{ liveOk=false; setTimeout(()=>{ if(!document.hidden) startSSE(); },2000); };
-      es.onopen=()=>{ liveOk=true; setStatus('Conectado en vivo • instantáneo en todos los dispositivos','ok'); };
-    }catch(e){ liveOk=false; }
-  }
-  function statusAfterSync(){
-    const n=absorb().length;
-    if(liveOk&&durableOk) setStatus('Sincronizado en vivo • '+n+' mensajes (PC y teléfono iguales)','ok');
-    else if(durableOk) setStatus('Servidores OK • '+n+' mensajes • se igualan solos','ok');
-    else if(liveOk) setStatus('En vivo • '+n+' mensajes','ok');
-    else if(n) setStatus(n+' mensajes aquí. Tocá Actualizar para igualar con el otro dispositivo','err');
-    else setStatus('Conectando a servidores…','err');
-  }
-  async function loadAndRender(isManual){
-    bindName(); paint(null,true);
-    if(isManual) setStatus('Sincronizando con todos los dispositivos…');
-    await Promise.allSettled([pullLive(), pullSnapshots()]);
-    hasHydrated=true;
-    // Tras mezclar local+nube, subir la UNION a todos los servidores
-    // Así el teléfono con 4 y la PC con 6 terminan con 6 (o más) en todos lados
-    try{
-      const merged = sortComments(absorb()).slice(-MAX_ITEMS);
-      if(merged.length){
-        await pushAllServers(merged);
-      }
-    }catch(e){}
-    paint(null,true);
-    statusAfterSync();
+  async function pullRemote(){
+    const client=sb();
+    if(!client){ setStatus('Supabase no cargó. Recargá la página.','err'); return; }
+    const { data, error } = await client.from('comments').select('*').order('ts',{ascending:true}).limit(MAX_ITEMS);
+    if(error){ setStatus('Error al cargar mensajes: '+error.message,'err'); return; }
+    mergeIn(data||[]);
+    paint();
+    setStatus('En vivo con Supabase • '+known.length+' mensajes','ok');
   }
 
   async function publish(){
-    const liveInput=document.getElementById('comment-input')||input;
-    const txt=(liveInput&&liveInput.value||'').trim();
-    if(!txt) return;
-    if(txt.length>MAX_TEXT){ setStatus('Máximo '+MAX_TEXT,'err'); return; }
-    if(!isClean(txt)||!isClean(getName())){ setStatus('Sin links/groserías','err'); return; }
-    const now=new Date();
+    if(!input) return;
+    const text=(input.value||'').trim();
+    if(!text){ setStatus('Escribí un mensaje.','err'); return; }
+    if(!isClean(text)){ setStatus('Ese mensaje no está permitido.','err'); return; }
     const item={
       id:'m_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
-      date:now.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}),
-      ts:Date.now(), name:getName(), owner:getOwnerId(), text:txt
+      text:text.slice(0,MAX_TEXT),
+      name:getName(),
+      owner:getOwnerId(),
+      date:new Date().toLocaleString(),
+      ts:Date.now()
     };
-    // 1. INSTANTANEO LOCAL (0ms)
-    pendingOptimistic.add(item.id);
-    absorb([item]);
-    if(liveInput) liveInput.value='';
-    try{ localStorage.setItem(NAME_KEY, getName()==='anon'?'':getName()); }catch(e){}
-    paint(keyOf(item),true);
-    setStatus('¡Publicado! Se ve al instante en PC y teléfono','ok');
-    if(liveInput) liveInput.focus();
-    if(bus) try{ bus.postMessage({type:'new',item:item}); }catch(e){}
-    window.dispatchEvent(new StorageEvent('storage',{key:LIST_KEY,newValue:localStorage.getItem(LIST_KEY)}));
+    input.value='';
+    mergeIn([item]); paint(item.id);
+    setStatus('Publicando…');
+    const client=sb();
+    if(!client){ setStatus('Guardado solo en este dispositivo (sin conexión Supabase).','err'); return; }
+    const { error } = await client.from('comments').insert([item]);
+    if(error){ setStatus('Error al publicar: '+error.message,'err'); return; }
+    setStatus('Publicado • se ve en todos los dispositivos','ok');
+  }
 
-    // 2. Hidratar desde servidores y re-mezclar el mensaje nuevo
+  function startRealtime(){
+    const client=sb();
+    if(!client) return;
     try{
-      await Promise.allSettled([pullLive(), pullSnapshots()]);
-      hasHydrated=true;
-      absorb([item]); // re-asegurar que el mensaje nuevo no se pierda en el merge
-    }catch(e){}
-
-    // 3. En vivo + guardar UNION completa en TODOS los servidores
-    publishLive(item);
-    try{
-      const ok = await pushAllServers(absorb());
-      if(ok) setStatus('¡Publicado en todos los dispositivos! • '+absorb().length+' mensajes','ok');
-      else setStatus('Publicado aquí. Reintentando en servidores… tocá Actualizar en el otro dispositivo','err');
-    }catch(e){
-      setStatus('Publicado local. Tocá Actualizar en el otro dispositivo','err');
-    }
-    // Reintento extra por si la red falló la primera vez
-    setTimeout(function(){ pushAllServers(absorb()).catch(function(){}); }, 1500);
-    setTimeout(function(){ pushAllServers(absorb()).catch(function(){}); }, 4000);
-
-    setTimeout(function(){ pendingOptimistic.delete(item.id); paint(null,true); }, 1000);
+      client.channel('tt-comments')
+        .on('postgres_changes',{ event:'*', schema:'public', table:'comments' }, payload=>{
+          if(payload.eventType==='DELETE'){
+            const id=payload.old&&payload.old.id;
+            if(id){ deletedIds[id]=true; known=known.filter(x=>keyOf(x)!==String(id)); saveLocal(known); paint(); }
+          } else if(payload.new){
+            mergeIn([payload.new]); paint(payload.new.id);
+            setStatus('En vivo • '+known.length+' mensajes','ok');
+          }
+        })
+        .subscribe(status=>{
+          if(status==='SUBSCRIBED') setStatus('Conectado en vivo (Supabase)','ok');
+        });
+    }catch(e){ console.warn(e); }
   }
 
-  function els(){
-    return {
-      input: document.getElementById('comment-input'),
-      btn: document.getElementById('btn-publicar'),
-      list: document.getElementById('comments-list'),
-      nameInput: document.getElementById('comment-name'),
-      statusEl: document.getElementById('msg-status'),
-      refreshBtn: document.getElementById('btn-refresh-msg')
-    };
-  }
-  if(btn) btn.addEventListener('click',publish);
-  if(input) input.addEventListener('keydown',e=>{
-    if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) publish();
-    else if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); publish(); }
-  });
-  if(refreshBtn) refreshBtn.addEventListener('click',()=>loadAndRender(true));
-  document.addEventListener('click',function(e){
-    const t=e.target&&e.target.closest&&e.target.closest('#btn-publicar,#btn-refresh-msg');
-    if(!t) return;
-    if(t.id==='btn-publicar'){ e.preventDefault(); publish(); }
-    if(t.id==='btn-refresh-msg'){ e.preventDefault(); loadAndRender(true); }
-  });
-  document.addEventListener('keydown',function(e){
-    if(!e.target || e.target.id!=='comment-input') return;
-    if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) publish();
-    else if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); publish(); }
-  });
+  if(btn && !btn._ttBound){ btn._ttBound=true; btn.addEventListener('click', e=>{ e.preventDefault(); publish(); }); }
+  if(input){ input.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); publish(); } }); }
+  if(refreshBtn && !refreshBtn._ttBound){ refreshBtn._ttBound=true; refreshBtn.onclick=()=>pullRemote(); }
 
-  if(bus){
-    bus.onmessage=ev=>{
-      const d=ev&&ev.data||{};
-      if(d.type==='new'&&d.item){ absorb([d.item]); paint(keyOf(d.item),true); }
-      if(d.type==='del'&&d.id){ deletedIds[d.id]=true; known=known.filter(x=>keyOf(x)!==d.id); saveLocal(known); paint(null,true); }
-    };
-  }
-  window.addEventListener('storage',ev=>{ if(ev&&ev.key===LIST_KEY){ absorb(); paint(null,true); } });
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ startSSE(); loadAndRender(false); } });
+  bindName();
+  mergeIn(loadLocal());
+  paint();
+  pullRemote();
+  startRealtime();
 
-  function attachMessagesHandler(){
-    Array.from(document.querySelectorAll('a')).forEach(a=>{
-      if(a.textContent.trim().toLowerCase()!=='messages' || a._ttBound) return;
-      a._ttBound=true; a.addEventListener('click',ev=>{ ev.preventDefault(); ev.stopPropagation(); const sec=document.getElementById('messages-section'); if(sec){ sec.scrollIntoView({behavior:'smooth'}); setTimeout(()=>{ if(input) input.focus(); },400); loadAndRender(true); } });
-    });
-  }
-  let tries=0; const iv=setInterval(()=>{ attachMessagesHandler(); if(++tries>20) clearInterval(iv); },500);
-
-  document.addEventListener('DOMContentLoaded',function(){ attachMessagesHandler(); loadAndRender(true); startSSE(); });
-  loadAndRender(true); startSSE();
-  // Reintentos al abrir: sube los mensajes locales y baja los de la nube (PC + teléfono)
-  setTimeout(function(){ loadAndRender(false); }, 2500);
-  setTimeout(function(){ loadAndRender(false); }, 6000);
-  setTimeout(function(){ try{ if(absorb().length) pushAllServers(absorb()); }catch(e){} }, 9000);
-  setInterval(function(){ if(!document.hidden) pullLive().catch(function(){}); }, 1000);
-  setInterval(function(){ if(!document.hidden) pullSnapshots().catch(function(){}); }, 2000);
-  setInterval(function(){ if(!document.hidden) loadAndRender(false); }, 12000);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) pullRemote(); });
 })();
 </script>
+
 
 <style id="fix-drag-and-games-v2">
 html, body { position:relative; }
@@ -1742,7 +1550,7 @@ html, body { position:relative; }
   const ART_KEY = 'tinytails_art';
   const NAME_KEY = 'tinytails_art_name';
   const OWNER_KEY = 'tinytails_art_owner';
-  const SHARED_API = 'https://crudcrud.com/api/cf97ae06e7c0444e9eaeae660a8ff4b2/arts';
+  const SHARED_API = 'supabase'; // migrated
   const ARCHIVE_BIN = 'https://extendsclass.com/api/json-storage/bin/acfdecc';
   const ARCHIVE_REST = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0fc4a5138609b';
   const MAX_ITEMS = 120;
@@ -1861,45 +1669,28 @@ html, body { position:relative; }
   }
 
   async function fetchSharedArt(){
-    const res=await fetch(SHARED_API + '?t=' + Date.now(), {headers:{'Accept':'application/json','Cache-Control':'no-cache'}});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    if(!Array.isArray(data)) return [];
-    return data.filter(x=>x && typeof x.image==='string' && x.image.indexOf('data:image')===0);
+    const client = window.ttSb;
+    if(!client) return [];
+    const { data, error } = await client.from('arts').select('*').order('ts',{ascending:true}).limit(MAX_ITEMS);
+    if(error){ console.warn(error); return []; }
+    return (data||[]).filter(x=>x && typeof x.image==='string' && x.image.indexOf('data:image')===0);
   }
-  async function fetchArchiveArts(){
-    const lists = [];
-    const urls = [ARCHIVE_BIN, ARCHIVE_REST];
-    for (const url of urls){
-      try{
-        const res = await fetch(url + '?t=' + Date.now(), {headers:{'Accept':'application/json','Cache-Control':'no-cache'}});
-        if(!res.ok) continue;
-        const data = await res.json();
-        const src = (data && data.data) ? data.data : data;
-        if(src && Array.isArray(src.arts)) lists.push(src.arts);
-      }catch(e){}
-    }
-    return mergeArts.apply(null, lists);
-  }
+  async function fetchArchiveArts(){ return []; }
   async function postSharedArt(item){
-    const res=await fetch(SHARED_API, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify({
-        id:item.id,
-        date:item.date,
-        name:item.name,
-        owner:item.owner,
-        image:item.image
-      })
-    });
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    return res.json();
+    const client = window.ttSb;
+    if(!client) throw new Error('no supabase');
+    const { data, error } = await client.from('arts').insert([{
+      id:item.id, date:item.date, name:item.name, owner:item.owner, image:item.image, ts:item.ts||Date.now()
+    }]).select().single();
+    if(error) throw error;
+    return data;
   }
   async function deleteSharedArt(remoteId){
     if(!remoteId) return false;
-    const res=await fetch(SHARED_API+'/'+encodeURIComponent(remoteId), {method:'DELETE'});
-    return res.ok || res.status===404;
+    const client = window.ttSb;
+    if(!client) return false;
+    const { error } = await client.from('arts').delete().eq('id', remoteId);
+    return !error;
   }
 
   function openArtLightbox(src){
@@ -1952,7 +1743,7 @@ html, body { position:relative; }
           ev.stopPropagation();
           if(!confirm('¿Borrar este dibujo de la galería?')) return;
           try{
-            if(item._id) await deleteSharedArt(item._id);
+            await deleteSharedArt(item.id || item._id);
           }catch(e){}
           const next=loadArt().filter(x=>x.id!==item.id && x._id!==item._id);
           saveArt(next);
@@ -2064,6 +1855,18 @@ html, body { position:relative; }
   let t=0;
   const iv=setInterval(()=>{ if(attach()) clearInterval(iv); if(t++>80) clearInterval(iv); },250);
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') hideAll(); });
+
+  // Supabase realtime for art gallery
+  (function(){
+    const client = window.ttSb;
+    if(!client) return;
+    try{
+      client.channel('tt-arts')
+        .on('postgres_changes',{ event:'*', schema:'public', table:'arts' }, ()=>{ renderArt(true); })
+        .subscribe();
+    }catch(e){}
+  })();
+
 })();
 </script>
 
